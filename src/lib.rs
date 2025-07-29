@@ -3,7 +3,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[durable_object]
 pub struct FileShare {
-    content: Vec<u8>,
     expire_at: f64,
     state: State,
     env: Env
@@ -14,7 +13,6 @@ const STORAGE_DURATION: u32 = 300;
 impl DurableObject for FileShare {
     fn new(state: State, env: Env) -> Self {
         Self {
-            content: vec![],
             expire_at: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
@@ -24,8 +22,12 @@ impl DurableObject for FileShare {
         }
     }
 
-    async fn fetch(&self, req: Request) -> Result<Response> {
-        Response::from_bytes((*self).content.clone())
+    async fn fetch(&self, mut req: Request) -> Result<Response> {
+        if (req.url()?.path() == "set_data") {
+            self.set_data(& mut req).await?;
+            self.set_alarm().await;
+        }
+        Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?)
     }
 
     async fn alarm(&self) -> Result<Response> {
@@ -34,10 +36,14 @@ impl DurableObject for FileShare {
 }
 
 impl FileShare {
+    async fn set_data(&self, req: &mut Request) -> Result<()> {
+        self.state.storage().put("content", req.bytes().await.unwrap_or(vec![])).await?;
+        Ok(())
+    }
     async fn set_alarm(&self) {
-        match (self.state.storage().get_alarm().await) {
-            Ok(Some(v)) => (),
-            Ok(None) => {
+        match self.state.storage().get_alarm().await.unwrap_or(None) {
+            Some(v) => (),
+            None => {
                 let timestamp = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
@@ -46,8 +52,7 @@ impl FileShare {
                     let diff = self.expire_at - timestamp;
                     let _ = self.state.storage().set_alarm(Duration::from_secs_f64(diff)).await;
                 }
-            },
-            _ => ()
+            }
         }
     }
 }
@@ -69,6 +74,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             };
             let item = namespace.id_from_string(&instance_id.as_str())?;
             let stub = item.get_stub()?;
+            stub.fetch_with_request(Request::new("set_data", Method::Post)?).await.unwrap();
             
             Response::ok("ok")
         })
