@@ -1,5 +1,5 @@
 use worker::*;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[durable_object]
 pub struct FileShare {
@@ -33,11 +33,24 @@ impl DurableObject for FileShare {
     }
 }
 
-// impl FileShare {
-//     async fn set_alarm(&self) {
-//         self.
-//     }
-// }
+impl FileShare {
+    async fn set_alarm(&self) {
+        match (self.state.storage().get_alarm().await) {
+            Ok(Some(v)) => (),
+            Ok(None) => {
+                let timestamp = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64() + (STORAGE_DURATION as f64);
+                if (timestamp < self.expire_at) {
+                    let diff = self.expire_at - timestamp;
+                    let _ = self.state.storage().set_alarm(Duration::from_secs_f64(diff)).await;
+                }
+            },
+            _ => ()
+        }
+    }
+}
 
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
