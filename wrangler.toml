@@ -1,4 +1,11 @@
 name = "file-share"
-main = "src/worker.js"
-workers_dev = true
+main = "build/worker/shim.mjs"
 compatibility_date = "2025-07-29"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+
+[[durable_objects.bindings]]
+name = "file_share"
+class_name = "FileShare"
