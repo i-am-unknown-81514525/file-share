@@ -1,10 +1,11 @@
 use worker::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+
 #[durable_object]
 pub struct FileShare {
-    expire_at: f64,
     state: State,
+    #[allow(dead_code)]
     env: Env
 }
 
@@ -13,47 +14,68 @@ const STORAGE_DURATION: u32 = 300;
 impl DurableObject for FileShare {
     fn new(state: State, env: Env) -> Self {
         Self {
-            expire_at: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs_f64() + (STORAGE_DURATION as f64),
             state: state,
             env: env
         }
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
-        if (req.url()?.path() == "set_data") {
+        if req.url()?.path() == "set_data" {
             self.set_data(& mut req).await?;
-            self.set_alarm().await;
+            self.set_ttl(STORAGE_DURATION).await?;
+            self.set_alarm().await?;
+        }
+        if req.url()?.path() == "delete" {
+            self.state.storage().delete_all().await?;
+        }
+        if req.url()?.path() == "update_ttl" {
+            self.set_ttl(STORAGE_DURATION).await?;
+            self.force_set_alarm().await?;
         }
         Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?)
     }
 
     async fn alarm(&self) -> Result<Response> {
+        self.state.storage().delete_all().await?;
         Response::empty()
     }
 }
 
 impl FileShare {
+    #[inline]
+    async fn set_ttl(&self, ttl: u32) -> Result<()>{
+        self.state
+            .storage()
+            .put("expire_at", SystemTime::now()
+            .duration_since(UNIX_EPOCH).unwrap()
+            .as_secs_f64() + 
+            (ttl as f64)
+        ).await?;
+        Ok(())
+    }
+
     async fn set_data(&self, req: &mut Request) -> Result<()> {
         self.state.storage().put("content", req.bytes().await.unwrap_or(vec![])).await?;
         Ok(())
     }
-    async fn set_alarm(&self) {
+    async fn set_alarm(&self) -> Result<()> {
         match self.state.storage().get_alarm().await.unwrap_or(None) {
             Some(v) => (),
-            None => {
-                let timestamp = SystemTime::now()
+            None => self.force_set_alarm().await?
+        };
+        Ok(())
+    }
+    async fn force_set_alarm(&self) -> Result<()> {
+        let timestamp = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
-                        .as_secs_f64() + (STORAGE_DURATION as f64);
-                if (timestamp < self.expire_at) {
-                    let diff = self.expire_at - timestamp;
-                    let _ = self.state.storage().set_alarm(Duration::from_secs_f64(diff)).await;
-                }
-            }
-        }
+                        .as_secs_f64();
+        let expire_at = self.state.storage().get::<f64>("expire_at").await?;
+        if (timestamp < expire_at) {
+            let diff = expire_at - timestamp;
+            let _ = self.state.storage().set_alarm(Duration::from_secs_f64(diff)).await;
+        };
+        Ok(())
     }
 }
 
@@ -72,9 +94,23 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Some(v) => String::from(instance_id),
                 None => instance_id
             };
+            instance_id = match instance_id.strip_prefix("/upload/") {
+                Some(v) => String::from(instance_id),
+                None => instance_id
+            };
             let item = namespace.id_from_string(&instance_id.as_str())?;
             let stub = item.get_stub()?;
-            stub.fetch_with_request(Request::new("set_data", Method::Post)?).await.unwrap();
+            stub.fetch_with_request(
+                Request::new_with_init(
+                    "set_data", 
+                    RequestInit::new()
+                        .with_body(
+                            Some(js_sys::Uint8Array::from(content.as_slice()).into())
+                        )
+                        .with_method(Method::Post)
+                )?
+            ).await?;
+            // stub.fetch_with_request(Request::new("set_data", Method::Post)?).await.unwrap();
             
             Response::ok("ok")
         })
