@@ -35,27 +35,12 @@ impl DurableObject for FileShare {
                 self.force_set_alarm().await?;
             },
             "is_active" => return Response::ok(match self.state.storage().get_alarm().await? {Some(v) => v.to_string(), None => "false".to_string()}),
-            "get_data" => return Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?),
+            "get_data" => return match self.state.storage().get::<Vec<u8>>("content").await {
+                Ok(r) => Response::from_bytes(r),
+                Err(_) => Ok(Response::ok("")?.with_status(404))
+            },
             _ => {}
         }
-        // if req.url()?.path() == "set_data" {
-        //     self.set_data(& mut req).await?;
-        //     self.set_ttl(STORAGE_DURATION).await?;
-        //     self.set_alarm().await?;
-        // }
-        // if req.url()?.path() == "delete" {
-        //     self.state.storage().delete_all().await?;
-        // }
-        // if req.url()?.path() == "update_ttl" {
-        //     self.set_ttl(STORAGE_DURATION).await?;
-        //     self.force_set_alarm().await?;
-        // }
-        // if (req.url()?.path() == "is_active") {
-        //     return Response::ok(match self.state.storage().get_alarm().await? {Some(v) => v.to_string(), None => "false".to_string()});
-        // }
-        // if req.url()?.path() == "get_data" {
-        //     return Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?);
-        // }
         Response::ok("ok")
     }
 
@@ -118,7 +103,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Some(v) => String::from(v),
                 None => instance_id
             };
-            instance_id = match instance_id.strip_prefix("/upload/") {
+            instance_id = match instance_id.strip_prefix("/") {
                 Some(v) => String::from(v),
                 None => instance_id
             };
@@ -141,8 +126,22 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 )?
             ).await?;
             // stub.fetch_with_request(Request::new("set_data", Method::Post)?).await.unwrap();
-            
-            Response::ok("ok")
+            Response::ok(file_id)
+        })
+        .get_async("/download", |req, ctx| async move {
+            let namespace = ctx.durable_object("file_share")?;
+            let mut fully_qualified_id = String::from(req.url()?.path().to_owned());
+            fully_qualified_id = match fully_qualified_id.strip_prefix("/download") {
+                Some(v) => String::from(v),
+                None => fully_qualified_id
+            };
+            fully_qualified_id = match fully_qualified_id.strip_prefix("/") {
+                Some(v) => String::from(v),
+                None => fully_qualified_id
+            };
+            let item = namespace.id_from_name(&fully_qualified_id)?;
+            let stub = item.get_stub()?;
+            return stub.fetch_with_str("https://worker/get_data").await
         })
         .run(req, env)
         .await

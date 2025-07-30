@@ -9,3 +9,7 @@ command = "cargo install -q worker-build && worker-build --release"
 [[durable_objects.bindings]]
 name = "file_share"
 class_name = "FileShare"
+
+[[migrations]]
+tag = "v1"
+new_classes = [ "FileShare" ]
