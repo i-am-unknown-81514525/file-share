@@ -1,6 +1,5 @@
 use worker::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use rand::Rng;
 
 
 #[durable_object]
@@ -88,6 +87,10 @@ impl FileShare {
     }
 }
 
+fn get_rand() -> u32 {
+    ((js_sys::Math::random() * (1e9-1e8 as f64)) as u32) + (1e8 as u32)
+}
+
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
@@ -107,13 +110,13 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Some(v) => String::from(v),
                 None => instance_id
             };
-            let mut file_id = rand::rng().random_range(1e8..1e9).to_string(); // always 8 digit
+            let mut file_id = get_rand().to_string(); // always 8 digit
             let mut item = namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
             let mut stub = item.get_stub()?;
             while stub.fetch_with_str("https://worker/is_active").await?.text().await? != "false".to_string() {
-                file_id = rand::rng().random_range(1e8..1e9).to_string(); // always 8 digit
+                file_id = get_rand().to_string(); // always 8 digit
                 item = namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
-                 stub = item.get_stub()?;
+                stub = item.get_stub()?;
             }
             stub.fetch_with_request(
                 Request::new_with_init(
