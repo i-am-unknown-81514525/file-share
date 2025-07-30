@@ -21,19 +21,42 @@ impl DurableObject for FileShare {
     }
 
     async fn fetch(&self, mut req: Request) -> Result<Response> {
-        if req.url()?.path() == "set_data" {
-            self.set_data(& mut req).await?;
-            self.set_ttl(STORAGE_DURATION).await?;
-            self.set_alarm().await?;
+        match req.url()?.path() {
+            "set_data" => {
+                self.set_data(& mut req).await?;
+                self.set_ttl(STORAGE_DURATION).await?;
+                self.set_alarm().await?;
+            },
+            "delete" => {
+                self.state.storage().delete_all().await?;
+            },
+            "update_ttl" => {
+                self.set_ttl(STORAGE_DURATION).await?;
+                self.force_set_alarm().await?;
+            },
+            "is_active" => return Response::ok(match self.state.storage().get_alarm().await? {Some(v) => v.to_string(), None => "false".to_string()}),
+            "get_data" => return Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?),
+            _ => {}
         }
-        if req.url()?.path() == "delete" {
-            self.state.storage().delete_all().await?;
-        }
-        if req.url()?.path() == "update_ttl" {
-            self.set_ttl(STORAGE_DURATION).await?;
-            self.force_set_alarm().await?;
-        }
-        Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?)
+        // if req.url()?.path() == "set_data" {
+        //     self.set_data(& mut req).await?;
+        //     self.set_ttl(STORAGE_DURATION).await?;
+        //     self.set_alarm().await?;
+        // }
+        // if req.url()?.path() == "delete" {
+        //     self.state.storage().delete_all().await?;
+        // }
+        // if req.url()?.path() == "update_ttl" {
+        //     self.set_ttl(STORAGE_DURATION).await?;
+        //     self.force_set_alarm().await?;
+        // }
+        // if (req.url()?.path() == "is_active") {
+        //     return Response::ok(match self.state.storage().get_alarm().await? {Some(v) => v.to_string(), None => "false".to_string()});
+        // }
+        // if req.url()?.path() == "get_data" {
+        //     return Response::from_bytes(self.state.storage().get::<Vec<u8>>("content").await?);
+        // }
+        Response::ok("ok")
     }
 
     async fn alarm(&self) -> Result<Response> {
@@ -99,12 +122,17 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Some(v) => String::from(v),
                 None => instance_id
             };
-            let file_id = rand::rng().random_range(1e8..1e9).to_string(); // always 8 digit
-            let item = namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
-            let stub = item.get_stub()?;
+            let mut file_id = rand::rng().random_range(1e8..1e9).to_string(); // always 8 digit
+            let mut item = namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
+            let mut stub = item.get_stub()?;
+            while stub.fetch_with_str("https://worker/is_active").await?.text().await? != "false".to_string() {
+                file_id = rand::rng().random_range(1e8..1e9).to_string(); // always 8 digit
+                item = namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
+                 stub = item.get_stub()?;
+            }
             stub.fetch_with_request(
                 Request::new_with_init(
-                    "set_data", 
+                    "https://worker/set_data", 
                     RequestInit::new()
                         .with_body(
                             Some(js_sys::Uint8Array::from(content.as_slice()).into())
