@@ -1,5 +1,6 @@
 use worker::*;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use rand::Rng;
 
 
 #[durable_object]
@@ -60,7 +61,7 @@ impl FileShare {
     }
     async fn set_alarm(&self) -> Result<()> {
         match self.state.storage().get_alarm().await.unwrap_or(None) {
-            Some(v) => (),
+            Some(_) => (),
             None => self.force_set_alarm().await?
         };
         Ok(())
@@ -71,7 +72,7 @@ impl FileShare {
                         .unwrap()
                         .as_secs_f64();
         let expire_at = self.state.storage().get::<f64>("expire_at").await?;
-        if (timestamp < expire_at) {
+        if timestamp < expire_at {
             let diff = expire_at - timestamp;
             let _ = self.state.storage().set_alarm(Duration::from_secs_f64(diff)).await;
         };
@@ -91,14 +92,15 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let namespace = ctx.durable_object("file_share")?;
             let mut instance_id = String::from(req.url()?.path().to_owned());
             instance_id = match instance_id.strip_prefix("/upload") {
-                Some(v) => String::from(instance_id),
+                Some(v) => String::from(v),
                 None => instance_id
             };
             instance_id = match instance_id.strip_prefix("/upload/") {
-                Some(v) => String::from(instance_id),
+                Some(v) => String::from(v),
                 None => instance_id
             };
-            let item = namespace.id_from_string(&instance_id.as_str())?;
+            let file_id = rand::rng().random_range(1e8..1e9).to_string(); // always 8 digit
+            let item = namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
             let stub = item.get_stub()?;
             stub.fetch_with_request(
                 Request::new_with_init(
