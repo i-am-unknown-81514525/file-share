@@ -45,6 +45,21 @@ impl DurableObject for FileShare {
                     Err(_) => Ok(Response::ok("")?.with_status(404)),
                 }
             }
+            "/websocket" => {
+                if self.state.storage().get_alarm().await? == None {
+                    if self.state.storage().get::<f64>("expire_at").await.is_err() {
+                        return Response::error("Not found", 404);
+                    } else {
+                        self.force_set_alarm().await?;
+                    }
+                }
+                let pair = WebSocketPair::new()?;
+                self.state.accept_web_socket(&pair.server);
+                pair.server
+                    .send_with_str(self.get_websocket_message().await?)?;
+
+                return Response::from_websocket(pair.client);
+            }
             _ => {}
         }
         Response::ok("ok")
@@ -53,22 +68,72 @@ impl DurableObject for FileShare {
     async fn alarm(&self) -> Result<Response> {
         console_log!(
             "Deleting item for id: {}",
-            match self.state.id().name() {
-                Some(v) => v,
-                None => self
-                    .state
-                    .storage()
-                    .get("key")
-                    .await
-                    .unwrap_or("null".to_string()),
-            }
+            self.get_fully_qualified_id().await
         );
+        for ws in self.state.get_websockets() {
+            let _ = ws.close(Some(1000), Some("EoL of Durable Object"));
+        }
         self.state.storage().delete_all().await?;
         Response::empty()
+    }
+
+    async fn websocket_message(
+        &self,
+        ws: WebSocket,
+        message: WebSocketIncomingMessage,
+    ) -> Result<()> {
+        console_log!(
+            "Received websocket message {} from id: {}",
+            match message {
+                WebSocketIncomingMessage::String(v) => v,
+                WebSocketIncomingMessage::Binary(v) =>
+                    String::from_utf8_lossy(v.as_slice()).to_string(),
+            },
+            self.get_fully_qualified_id().await
+        );
+        ws.send_with_str(self.get_websocket_message().await?)
+    }
+    #[allow(unused_variables)]
+    async fn websocket_close(
+        &self,
+        ws: WebSocket,
+        code: usize,
+        reason: String,
+        was_clean: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    #[allow(unused_variables)]
+    async fn websocket_error(&self, ws: WebSocket, error: Error) -> Result<()> {
+        Ok(())
     }
 }
 
 impl FileShare {
+    #[inline]
+    async fn get_fully_qualified_id(&self) -> String {
+        match self.state.id().name() {
+            Some(v) => v,
+            None => self
+                .state
+                .storage()
+                .get("key")
+                .await
+                .unwrap_or("null".to_string()),
+        }
+    }
+
+    #[inline]
+    async fn get_websocket_message(&self) -> Result<String> {
+        Ok(self
+            .state
+            .storage()
+            .get::<f64>("expire_at")
+            .await?
+            .to_string())
+    }
+
     #[inline]
     async fn set_ttl(&self, ttl: u32) -> Result<()> {
         self.state
@@ -111,7 +176,17 @@ impl FileShare {
                 .set_alarm(Duration::from_secs_f64(diff))
                 .await;
         };
+        self.state.wait_until(post_websockets(
+            self.state.get_websockets(),
+            expire_at.to_string(),
+        ));
         Ok(())
+    }
+}
+
+async fn post_websockets(wss: Vec<WebSocket>, message: String) -> () {
+    for ws in wss {
+        let _ = ws.send(&message);
     }
 }
 
@@ -197,14 +272,35 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/download/:fully_qualified", |req, ctx| async move {
             let namespace = ctx.durable_object("file_share")?;
             let mut fully_qualified_id = String::from(req.url()?.path().to_owned());
-            fully_qualified_id = strip(&instance_id, vec!["/download", "/"]);
-            let item = namespace.id_from_name(&fully_qualified_id)?;
-            let stub = item.get_stub()?;
+            fully_qualified_id = strip(&fully_qualified_id, vec!["/download", "/"]);
+            let stub = namespace.id_from_name(&fully_qualified_id)?.get_stub()?;
             console_log!(
             	"Attempt to access file with id: {}",
              	fully_qualified_id,
             );
             return stub.fetch_with_str("https://worker/get_data").await;
+        })
+        .get_async("/websocket/:fully_qualified", |req, ctx| async move {
+            if req.headers().get("Upgrade").unwrap_or(Some("null".to_string())).unwrap_or("null".to_string()) != "websocket" {
+                console_log!("Missing Upgrade headers");
+                return Response::error("Missing Upgrade headers", 400);
+            }
+            let namespace = ctx.durable_object("file_share")?;
+            let mut fully_qualified_id = String::from(req.url()?.path().to_owned());
+            fully_qualified_id = strip(&fully_qualified_id, vec!["/websocket", "/"]);
+            let stub = namespace.id_from_name(&fully_qualified_id)?.get_stub()?;
+            console_log!(
+            	"Attempt to access websocket of file with id: {}",
+             	fully_qualified_id,
+            );
+            let headers = Headers::new();
+            headers.append("Upgrade", "websocket")?;
+            return stub.fetch_with_request(Request::new_with_init(
+                "https://worker/websocket",
+                RequestInit::new()
+                    .with_method(Method::Get)
+                    .with_headers(headers),
+            )?).await;
         })
         .run(req, env)
         .await
