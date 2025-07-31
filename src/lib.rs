@@ -188,11 +188,11 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             )?)
             .await?;
             console_log!(
-                "Uploaded with id: {}, Data size: {}\nData:\n{}",
+                "Uploaded with id: {}, Data size: {}",
                 fully_qualified_id,
                 content.len(),
-                String::from_utf8_lossy(content.as_slice())
             );
+            console_log!("Data: {}", String::from_utf8_lossy(content.as_slice()));
             // stub.fetch_with_request(Request::new("set_data", Method::Post)?).await.unwrap();
             Response::ok(file_id)
         })
