@@ -50,6 +50,10 @@ impl DurableObject for FileShare {
     }
 
     async fn alarm(&self) -> Result<Response> {
+        console_log!(
+            "Deleting item for id: {}",
+            self.state.id().name().unwrap_or("null".to_string())
+        );
         self.state.storage().delete_all().await?;
         Response::empty()
     }
@@ -98,17 +102,53 @@ fn get_rand() -> u32 {
     ((js_sys::Math::random() * (1e9 - 1e8 as f64)) as u32) + (1e8 as u32)
 }
 
+struct ClientInfo {
+    pub ip: String,
+    pub ray_id: String,
+    pub user_agent: String,
+}
+
+fn get_info(req: &Request) -> ClientInfo {
+    let ip: String = req
+        .headers()
+        .get(&"cf-connecting-ip")
+        .unwrap_or(Some("null".to_string()))
+        .unwrap_or("null".to_string());
+    let ray_id: String = req
+        .headers()
+        .get(&"cf-ray")
+        .unwrap_or(Some("null".to_string()))
+        .unwrap_or("null".to_string());
+    let user_agent: String = req
+        .headers()
+        .get(&"user-agent")
+        .unwrap_or(Some("null".to_string()))
+        .unwrap_or("null".to_string());
+    ClientInfo {
+        ip: ip,
+        ray_id: ray_id,
+        user_agent: user_agent,
+    }
+}
+
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
-
+    // let client_info: ClientInfo = get_info(&req);
+    // console_log!(
+    //     "{} - [{}] : {} {}\nUser Agent: {}",
+    //     client_info.ip,
+    //     client_info.ray_id,
+    //     req.method().to_string(),
+    //     req.url()?.path().to_string(),
+    //     client_info.user_agent
+    // );
+    // let router = Router::with_data(client_info);
     let router = Router::new();
-    console_log!("{}", req.url()?.path().to_string());
+
     router
         .post_async("/upload/:instance_id", |mut req, ctx| async move {
-            console_log!("reached upload");
             let content = req.bytes().await.unwrap_or(vec![]);
-            console_log!("Data length: {}", content.iter().len());
             let namespace = ctx.durable_object("file_share")?;
             let mut instance_id = String::from(req.url()?.path().to_owned());
             instance_id = match instance_id.strip_prefix("/upload") {
@@ -120,8 +160,8 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 None => instance_id,
             };
             let mut file_id = get_rand().to_string(); // always 8 digit
-            let mut item =
-                namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
+            let mut fully_qualified_id = format!("{}:::{}", instance_id, file_id);
+            let mut item = namespace.id_from_name(&fully_qualified_id.as_str())?;
             let mut stub = item.get_stub()?;
             let mut result = stub
                 .fetch_with_str("https://worker/is_active")
@@ -129,10 +169,10 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 .text()
                 .await?;
             while result != "false".to_string() {
-                console_log!("file_id {} used, with result {}", file_id, result);
+                console_warn!("Attempt to use id: {} but already used by another item, with {}ms remaining before expire", fully_qualified_id, result);
                 file_id = get_rand().to_string(); // always 8 digit
-                item =
-                    namespace.id_from_name(&format!("{}:::{}", instance_id, file_id).as_str())?;
+                fully_qualified_id = format!("{}:::{}", instance_id, file_id);
+                item = namespace.id_from_name(&fully_qualified_id.as_str())?;
                 stub = item.get_stub()?;
                 result = stub
                     .fetch_with_str("https://worker/is_active")
@@ -147,6 +187,12 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     .with_method(Method::Post),
             )?)
             .await?;
+            console_log!(
+                "Uploaded with id: {}, Data size: {}\nData:\n{}",
+                fully_qualified_id,
+                content.len(),
+                String::from_utf8_lossy(content.as_slice())
+            );
             // stub.fetch_with_request(Request::new("set_data", Method::Post)?).await.unwrap();
             Response::ok(file_id)
         })
@@ -163,6 +209,10 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             };
             let item = namespace.id_from_name(&fully_qualified_id)?;
             let stub = item.get_stub()?;
+            console_log!(
+            	"Attempt to access file with id: {}",
+             	fully_qualified_id,
+            );
             return stub.fetch_with_str("https://worker/get_data").await;
         })
         .run(req, env)

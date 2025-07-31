@@ -13,3 +13,7 @@ class_name = "FileShare"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = [ "FileShare" ]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
