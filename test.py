@@ -16,7 +16,7 @@ def fmt_time(seconds):
 url = "s://file-share.iamaunknownpeople.workers.dev"
 # url = "://100.96.0.7:8787"
 
-content = "test"*10000
+content = "test"*100000
 
 l1 = []
 l2 = []

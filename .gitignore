@@ -174,3 +174,6 @@ dist
 target
 .idea
 .wakatime-project
+build
+__marimo__/cache
+.venv
