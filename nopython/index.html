@@ -1,0 +1,92 @@
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                background-color: #101010;
+                color: white;
+                font-family: "JetBrains Mono", monospace;
+                font-size: 13px;
+            }
+            body {
+                font-family: "JetBrains Mono", monospace;
+                font-size: 13px;
+            }
+            input {
+                background-color: #202020;
+                font-family: "JetBrains Mono", monospace;
+                font-size: 11px;
+                border: none;
+                border-radius: 10px;
+                padding: 3px 6px;
+                color: white;
+            }
+            input:hover {
+                background-color: #303030;
+                cursor: pointer;
+            }
+            button {
+                background-color: #202020;
+                color: white;
+                font-family: "JetBrains Mono", monospace;
+                font-size: 11px;
+                border: none;
+                border-radius: 10px;
+                padding: 3px 6px;
+            }
+            button:hover {
+                background-color: #303030;
+                cursor: pointer;
+                color: yellow;
+            }
+            #instance_id_display {
+                display: inline-flex;
+            }
+            #instance_id_display:hover {
+                background-color: #404040;
+                color: lightyellow;
+                cursor: pointer;
+                border-radius: 10px;
+                max-width: 400px;
+            }
+        </style>
+        <script>
+            let instance = "";
+            function update_instance_name() {
+                let instance_string = "Instance ID: " + instance == "" ? "No instance set" : instance;
+                document.getElementById("instance_id_display").innerHTML = instance;
+            }
+            function set_instance() {
+                instance = document.getElementById("instance_id_input").value;
+                update_instance_name();
+            }
+        </script>
+        <title>FileShare demonstration UI</title>
+    </head>
+    <body>
+        <h1>FileShare demonstration UI</h1>
+        <div>
+            I am force to build a UI that isn't a Python notebook, so here you go, if you want some UI, 
+            <a href="/">click</a> here
+        </div>
+        <br>
+        <div id="instance_id_display"> Instance ID: No instance set</div>
+        <br>
+        <br>
+        <input 
+        placeholder="Input instance ID here", 
+        style="min-width: 200px; border-radius: 10px 0 0 10px; padding-right: 0; margin-right: 0;" 
+        id="instance_id_input"></input><button 
+            onclick="set_instance()", 
+            style="min-width: 150px; 
+            border-radius: 0 10px 10px 0; padding-left: 0; 
+            margin-left: 0;",
+        >
+            Set instance ID
+        </button>
+    </body>
+</html>
