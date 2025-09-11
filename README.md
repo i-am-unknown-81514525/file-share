@@ -9,3 +9,5 @@ It don't store the filename of the files and the application using it **should**
 
 
 ### API Endpoint:
+`POST /upload/{instance_id}`
+`GET /download/{instance_id}:::{file_id}`
